@@ -17,9 +17,9 @@ This project made use of a Bayesian Analysis package called [Nimble](https://r-n
 
 ## Contact
 
-[ORCID](https://orcid.org/0000-0001-7463-8638)
-[Google Scholar](https://scholar.google.com/citations?hl=en&user=0ZG-6CsAAAAJ)
-[Website](https://wccarleton.me)
+[ORCID](https://orcid.org/0000-0001-7463-8638) |
+[Google Scholar](https://scholar.google.com/citations?hl=en&user=0ZG-6CsAAAAJ) | 
+[Website](https://wccarleton.me) |
 
 ## License
 
