@@ -1,0 +1,496 @@
+---
+title: "Testing the model with simulated data"
+author: "W. christopher Carleton"
+output:
+    pdf_document:
+        keep_tex: true
+---
+
+# Replication
+
+In order to replicate the analyses described in the paper associated with this supplement, run the code below (or use the `rmarkdown::render` function in an R session). For the script to work, the following files will need to be in the working directory:
+
+- EuroClimCon.csv
+- mcmc_samples_Glaser2009.RData
+- mcmc_samples_Luterbacher2016.RData
+- mcmc_samples_Buentgen2011.RData
+- mcmc_samples_Buentgen2021.RData
+
+At a minimum the R package `nimble` will need to be loaded:
+
+```{r}
+library(nimble)
+```
+
+Then, the following code can be used to re-run any of our analyses. Simply change the `X` variable in order to use one of the alternative temperature reconstructions we assessed (see the paper for details). Also, change the `run_it` variable to `TRUE`.
+
+```{r}
+run_it <- FALSE
+```
+
+Load the covariate data and set the number of observations:
+
+```{r, eval = run_it}
+df <- read.csv(file ="../Data/EuroClimCon.csv", head = T)
+t1 <- 1005
+t2 <- 1980
+df <- subset(df, Year >= t1 & Year <= t2)
+
+y <- df$Conflicts
+x <- scale(df$T_Buntgen2021, scale = T)[,1]
+n <- length(x)
+```
+
+Now we set up and run a nimble model.
+
+```{r, eval = run_it}
+library(nimble)
+
+poisTSCode <- nimbleCode({
+    B1 ~ dnorm(mean=0,sd=100)
+    B2 ~ dnorm(mean=0,sd=100)
+    B3 ~ dnorm(mean=0,sd=100)
+    a1 ~ dunif(0,5)
+    d ~ dunif(1,15)
+    a2 <- a1 - d
+    mu[1] <- X[1] * (B1 + (B2 * (X[1] >= a1) + B3 * (X[1] <= a2)))
+    sigma ~ dexp(0.75)
+    lambda0 ~ dnorm(mean = 0, sd = 2)
+    rho ~ dnorm(0, sd = 2)
+    lambda[1] ~ dnorm(rho * lambda0, sd = sigma)
+    for (j in 2:Time){
+      mu[j] <- X[j] * (B1 + (B2 * (X[j] >= a1) + B3 * (X[j] <= a2)))
+      lambda[j] ~ dnorm(rho * lambda[j - 1], sd = sigma)
+    }
+    for (j in 1:Time){
+      Y[j] ~ dpois(exp(mu[j] + lambda[j]))
+    }
+})
+
+poisTSData <- list(Y = y,
+                  X = x)
+
+poisTSConsts <- list(Time = n)
+
+poisTSInits <- list(lambda0 = 0,
+                     sigma = 1,
+                     rho = 0,
+                     a1 = 1,
+                     d = 1,
+                     B1 = 0,
+                     B2 = 0,
+                     B3 = 0)
+
+poisTSModel <- nimbleModel(code = poisTSCode,
+                        data = poisTSData,
+                        inits = poisTSInits,
+                        constants = poisTSConsts)
+
+#compile nimble model to C++ code—much faster runtime
+C_poisTSModel <- compileNimble(poisTSModel, showCompilerOutput = FALSE)
+
+#configure the MCMC
+poisTSModel_conf <- configureMCMC(poisTSModel, thin = 1)
+poisTSModel_conf$removeSampler(c("B1", "B2", "B3", "a1", "d"))
+poisTSModel_conf$addSampler(target = c("B1", "B2", "B3"),
+                            type = "AF_slice")
+poisTSModel_conf$addSampler(target = c("a1", "d"),
+                            type = "AF_slice")
+
+#build MCMC
+poisTSModelMCMC <- buildMCMC(poisTSModel_conf,enableWAIC=F)
+
+#compile MCMC to C++—much faster
+C_poisTSModelMCMC <- compileNimble(poisTSModelMCMC, project=poisTSModel)
+
+#number of MCMC iterations
+niter <- 2000000
+
+#set seed for replicability
+#set.seed(1)
+
+#call the C++ compiled MCMC model
+samples <- runMCMC(C_poisTSModelMCMC, niter=niter)
+```
+
+Now we can check the mcmc chains for convergence after removing the first 1,000,000 iterations as burn-in,
+
+```{r, eval = run_it}
+library(coda)
+geweke.diag(samples[-c(1:1000000),])
+```
+
+And, finally, plot the results:
+
+```{r, eval = run_it}
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+
+burnin <- 1000000
+thin <- 10
+
+dim_samples <- dim(samples)
+dframe <- as.data.frame(samples[seq(burnin,dim_samples[1],thin),])
+iter <- seq(burnin,dim_samples[1],thin)
+dframe$iteration <- iter
+samples_long <- gather(dframe,
+                        key = "Parameter",
+                        value = "Sample",
+                        -"iteration")
+parameters <- c("B1",
+                "B2",
+                "B3",
+                "a1",
+                "d",
+                "lambda0",
+                "rho",
+                "sigma")
+samples_long$Parameter <- factor(samples_long$Parameter, levels = parameters)
+p <- ggplot(data = samples_long) +
+        geom_path(mapping = aes(y = Sample, x = iteration)) +
+        facet_grid(rows = vars(Parameter), scales = "free") +
+        theme_minimal(base_family="serif")
+p
+```
+
+# MCMC Diagnostics
+
+With MCMC simulations it is necessary to determine whether the samples of target parameter posterior distributions are reasonably unbiased. To evaluate the results, we used two diagnostics. One is simply visual. We inspected the MCMC chains for indications of bias, poor mixing, or other pathologies. The other involves the standard Geweke test, which determines whether the MCMC chains are stationary (have, at a minimum, constant means). All of the results we obtained from our MCMC passed these standard checks. The results are presented below.
+
+## MCMC chain plots
+
+For each of the four anlayses described in the paper associated with this supplement, we plotted the MCMC samples of the posterior densities for the main regression parameters. The following R code was used to do so (given the chains stored in matrices and saved as .RData files).
+
+### Buentgen et al. 2011
+
+First, we load the necessary plotting libraries:
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+```
+
+Then, we load one of the .RData files containing the MCMC chains stored as a matrix called 'samples'---in this case, we load the analysis involving the Buentgen et al. 2011 temperature reconstruction:
+
+```{r}
+load("./mcmc_samples_Buentgen2011.RData")
+```
+
+Finally, we plot the chains for the main regression parameters after removing burnin and thining the samples to improve plotting efficiency:
+
+```{r}
+
+burnin <- 1000000
+thin <- 10
+
+dim_samples <- dim(samples)
+dframe <- as.data.frame(samples[seq(burnin,dim_samples[1],thin),])
+iter <- seq(burnin,dim_samples[1],thin)
+dframe$iteration <- iter
+samples_long <- gather(dframe,
+                        key = "Parameter",
+                        value = "Sample",
+                        -"iteration")
+parameters <- c("B1",
+                "B2",
+                "B3",
+                "a1",
+                "d",
+                "lambda0",
+                "rho",
+                "sigma")
+samples_long$Parameter <- factor(samples_long$Parameter, levels = parameters)
+p <- ggplot(data = samples_long) +
+        geom_path(mapping = aes(y = Sample, x = iteration)) +
+        facet_grid(rows = vars(Parameter), scales = "free") +
+        theme_minimal(base_family="serif")
+p
+```
+
+We, of course, reran the same procedure for each set of results. The remaining three sets of MCMC chains (one for each of the three other analyses) are below, but the code is not shown in this document.
+
+### Buentgen 2021
+
+```{r, include = FALSE}
+load("./mcmc_samples_Buentgen2021.RData")
+burnin <- 1000000
+thin <- 10
+
+dim_samples <- dim(samples)
+dframe <- as.data.frame(samples[seq(burnin,dim_samples[1],thin),])
+iter <- seq(burnin,dim_samples[1],thin)
+dframe$iteration <- iter
+samples_long <- gather(dframe,
+                        key = "Parameter",
+                        value = "Sample",
+                        -"iteration")
+parameters <- c("B1",
+                "B2",
+                "B3",
+                "a1",
+                "d",
+                "lambda0",
+                "rho",
+                "sigma")
+samples_long$Parameter <- factor(samples_long$Parameter, levels = parameters)
+p <- ggplot(data = samples_long) +
+        geom_path(mapping = aes(y = Sample, x = iteration)) +
+        facet_grid(rows = vars(Parameter), scales = "free") +
+        theme_minimal(base_family="serif")
+p
+```
+
+### Glaser 2009
+
+```{r, include = FALSE}
+load("./mcmc_samples_Glaser2009.RData")
+burnin <- 1000000
+thin <- 10
+
+dim_samples <- dim(samples)
+dframe <- as.data.frame(samples[seq(burnin,dim_samples[1],thin),])
+iter <- seq(burnin,dim_samples[1],thin)
+dframe$iteration <- iter
+samples_long <- gather(dframe,
+                        key = "Parameter",
+                        value = "Sample",
+                        -"iteration")
+parameters <- c("B1",
+                "B2",
+                "B3",
+                "a1",
+                "d",
+                "lambda0",
+                "rho",
+                "sigma")
+samples_long$Parameter <- factor(samples_long$Parameter, levels = parameters)
+p <- ggplot(data = samples_long) +
+        geom_path(mapping = aes(y = Sample, x = iteration)) +
+        facet_grid(rows = vars(Parameter), scales = "free") +
+        theme_minimal(base_family="serif")
+p
+```
+
+### Luterbacher 2016
+
+```{r, include = FALSE}
+load("./mcmc_samples_Luterbacher2016.RData")
+burnin <- 1000000
+thin <- 10
+
+dim_samples <- dim(samples)
+dframe <- as.data.frame(samples[seq(burnin,dim_samples[1],thin),])
+iter <- seq(burnin,dim_samples[1],thin)
+dframe$iteration <- iter
+samples_long <- gather(dframe,
+                        key = "Parameter",
+                        value = "Sample",
+                        -"iteration")
+parameters <- c("B1",
+                "B2",
+                "B3",
+                "a1",
+                "d",
+                "lambda0",
+                "rho",
+                "sigma")
+samples_long$Parameter <- factor(samples_long$Parameter, levels = parameters)
+p <- ggplot(data = samples_long) +
+        geom_path(mapping = aes(y = Sample, x = iteration)) +
+        facet_grid(rows = vars(Parameter), scales = "free") +
+        theme_minimal(base_family="serif")
+p
+```
+
+## Geweke Diagnostic
+
+The Geweke diagnostic is a simple but effective way to check whether an MCMC chain is stationary. Stationarity in this case means that the mean of the distribution of samples from a given posterior density is the same for beginning and end of a given MCMC chain (after burnin has been removed). Stationarity would indicate that the simulation had converged on a distribution---because the mean of the sample distribution was not still moving aroun the parameter space. To detect deviations from stationarity, the Geweke diagnostic relies on a simple t-test comparing some initial portion of a chain to some final portion. Typically, it involves comparing the first 10% of a given chain to the last 50%. We ran this diagnostic for the main parameters in each regression analysis using the `geweke.diag` function from the `coda` package. We then collated the results into a table. The following code was used:
+
+```{r}
+library(coda)
+
+models <- c("Glaser2009",
+            "Buentgen2011",
+            "Buentgen2021",
+            "Luterbacher2016")
+
+geweke_z <- c()
+
+for(j in models){
+    p <- paste("./mcmc_samples_", j, ".RData", sep="")
+    load(p)
+    g <- geweke.diag(samples[-c(1:1000000),])$z
+    geweke_z <- rbind(geweke_z, g)
+}
+
+geweke_results <- data.frame(model = models)
+geweke_results <- cbind(geweke_results, geweke_z)
+
+write.csv(geweke_results, file="./geweke_results.csv",row.names=F)
+
+print(geweke_results)
+```
+
+# Testing the model
+
+The aim of this section is to demonstrate that the model described in the associated paper works as expected with simulated data.
+
+To begin, we need to simulate some data. For this purpose, we will use one of the temperature records analyzed in the associated paper as the key driver of variation in the simulated count data set against the background autocorrelated process. There are several main variables involved. These include 'y', which we will let be the count (of conflicts); 'x', which we will use as the temperature variable; and [b1, b2, b3], the regression coefficients relating temperature to count.
+
+Load the covariate data and set the number of observations:
+
+```{r}
+df <- read.csv(file ="../Data/EuroClimCon.csv", head = T)
+t1 <- 1005
+t2 <- 1980
+df <- subset(df, Year >= t1 & Year <= t2)
+
+x <- scale(df$T_Buntgen2021, scale = T)[,1]
+n <- length(x)
+```
+
+Set the necessary regression coefficients including the thresholds, denoted a1 (upper) and a2 (lower).
+
+```{r}
+b1 <- 0
+b2 <- 1.25
+b3 <- -1.25
+
+a1 <- quantile(x,probs=0.95)
+a2 <- quantile(x,probs=0.05)
+```
+
+Set up the variables and autocorrelation process and then simulate the final count process.
+
+```{r}
+l <- c()
+l0 <- 1
+rho = 0.9
+sig <- 0.25
+l[1] <- rnorm(n=1, mean = rho * l0, sd = sig)
+
+mu <- c()
+mu[1] <- x[1] * (b1 + (b2 * (x[1] >= a1) + b3 * (x[1] <= a2)))
+
+for(j in 2:n){
+   l[j] <- rnorm(n = 1, mean = rho * l[j - 1], sd = sig)
+   mu[j] <- x[j] * (b1 + (b2 * (x[j] >= a1) + b3 * (x[j] <= a2)))
+}
+
+y <- rpois(n = n, lambda = exp(mu + l))
+```
+
+Now we set up and run a nimble model.
+
+```{r}
+library(nimble)
+
+poisTSCode <- nimbleCode({
+    B1 ~ dnorm(mean=0,sd=100)
+    B2 ~ dnorm(mean=0,sd=100)
+    B3 ~ dnorm(mean=0,sd=100)
+    a1 ~ dunif(0,5)
+    d ~ dunif(1,15)
+    a2 <- a1 - d
+    mu[1] <- X[1] * (B1 + (B2 * (X[1] >= a1) + B3 * (X[1] <= a2)))
+    sigma ~ dexp(0.75)
+    lambda0 ~ dnorm(mean = 0, sd = 2)
+    rho ~ dnorm(0, sd = 2)
+    lambda[1] ~ dnorm(rho * lambda0, sd = sigma)
+    for (j in 2:Time){
+      mu[j] <- X[j] * (B1 + (B2 * (X[j] >= a1) + B3 * (X[j] <= a2)))
+      lambda[j] ~ dnorm(rho * lambda[j - 1], sd = sigma)
+    }
+    for (j in 1:Time){
+      Y[j] ~ dpois(exp(mu[j] + lambda[j]))
+    }
+})
+
+poisTSData <- list(Y = y,
+                  X = x)
+
+poisTSConsts <- list(Time = n)
+
+poisTSInits <- list(lambda0 = 0,
+                     sigma = 1,
+                     rho = 0,
+                     a1 = 1,
+                     d = 1,
+                     B1 = 0,
+                     B2 = 0,
+                     B3 = 0)
+
+poisTSModel <- nimbleModel(code = poisTSCode,
+                        data = poisTSData,
+                        inits = poisTSInits,
+                        constants = poisTSConsts)
+
+#compile nimble model to C++ code—much faster runtime
+C_poisTSModel <- compileNimble(poisTSModel, showCompilerOutput = FALSE)
+
+#configure the MCMC
+poisTSModel_conf <- configureMCMC(poisTSModel, thin = 1)
+poisTSModel_conf$removeSampler(c("B1", "B2", "B3", "a1", "d"))
+poisTSModel_conf$addSampler(target = c("B1", "B2", "B3"),
+                            type = "AF_slice")
+poisTSModel_conf$addSampler(target = c("a1", "d"),
+                            type = "AF_slice")
+
+#build MCMC
+poisTSModelMCMC <- buildMCMC(poisTSModel_conf,enableWAIC=F)
+
+#compile MCMC to C++—much faster
+C_poisTSModelMCMC <- compileNimble(poisTSModelMCMC, project=poisTSModel)
+
+#number of MCMC iterations
+niter <- 2000000
+
+#set seed for replicability
+#set.seed(1)
+
+#call the C++ compiled MCMC model
+samples <- runMCMC(C_poisTSModelMCMC, niter=niter)
+```
+
+Now we can check the mcmc chains for convergence after removing the first 1,000,000 iterations as burn-in,
+
+```{r}
+library(coda)
+geweke.diag(samples[-c(1:1000000),])
+```
+
+And, finally, plot the results:
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+
+burnin <- 1000000
+thin <- 10
+
+dim_samples <- dim(samples)
+dframe <- as.data.frame(samples[seq(burnin,dim_samples[1],thin),])
+iter <- seq(burnin,dim_samples[1],thin)
+dframe$iteration <- iter
+samples_long <- gather(dframe,
+                        key = "Parameter",
+                        value = "Sample",
+                        -"iteration")
+parameters <- c("B1",
+                "B2",
+                "B3",
+                "a1",
+                "d",
+                "lambda0",
+                "rho",
+                "sigma")
+samples_long$Parameter <- factor(samples_long$Parameter, levels = parameters)
+p <- ggplot(data = samples_long) +
+        geom_path(mapping = aes(y = Sample, x = iteration)) +
+        facet_grid(rows = vars(Parameter), scales = "free") +
+        theme_minimal(base_family="serif")
+p
+```
