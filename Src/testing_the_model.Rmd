@@ -1,5 +1,5 @@
 ---
-title: "Testing the model with simulated data"
+title: "Replication Document for `A song of Neither Fire nor Ice: Temperature extremes had no impact on violent conflict among European societies during the 2 nd millennium CE`"
 author: "W. christopher Carleton"
 output:
     pdf_document:
@@ -480,6 +480,127 @@ samples_long <- gather(dframe,
                         value = "Sample",
                         -"iteration")
 parameters <- c("B1",
+                "B2",
+                "B3",
+                "a1",
+                "d",
+                "lambda0",
+                "rho",
+                "sigma")
+samples_long$Parameter <- factor(samples_long$Parameter, levels = parameters)
+p <- ggplot(data = samples_long) +
+        geom_path(mapping = aes(y = Sample, x = iteration)) +
+        facet_grid(rows = vars(Parameter), scales = "free") +
+        theme_minimal(base_family="serif")
+p
+```
+
+# Intercept
+It is important to note that the parameter `lambda0` in the models above serves as the intercept for the whole model. As a result, the regression expression (`mu[t]`) has no separate intercept. The interpretation of the model, therefore, is that the conflict process has no long-term average independent of autocorrelation and the effect of covariates. In practice, we found that this assumption had no effect on our findings. We verified it by running one of the models again with a separate intercept included for the regression term, `B0`. As one might expect, that intercept is strongly correlated with `lambda0` and, so, very many MCMC iterations were required to achieve stable posterior estimates for those two parameters. The code below can be used to re-run the model.
+
+```{r, eval = run_it}
+df <- read.csv(file ="../Data/EuroClimCon.csv", head = T)
+t1 <- 1005
+t2 <- 1980
+df <- subset(df, Year >= t1 & Year <= t2)
+
+y <- df$Conflicts
+x <- scale(df$T_Glaser2009, scale = T)[,1]
+n <- length(x)
+```
+
+Now we set up and run a nimble model.
+
+```{r, eval = run_it}
+library(nimble)
+
+poisTSCode <- nimbleCode({
+    B0 ~ dnorm(mean=0,sd=100)
+    B1 ~ dnorm(mean=0,sd=100)
+    B2 ~ dnorm(mean=0,sd=100)
+    B3 ~ dnorm(mean=0,sd=100)
+    a1 ~ dunif(0,5)
+    d ~ dunif(1,15)
+    a2 <- a1 - d
+    mu[1] <- X[1] * (B1 + (B2 * (X[1] >= a1) + B3 * (X[1] <= a2)))
+    sigma ~ dexp(0.75)
+    lambda0 ~ dnorm(mean = 0, sd = 2)
+    rho ~ dnorm(0, sd = 2)
+    lambda[1] ~ dnorm(rho * lambda0, sd = sigma)
+    for (j in 2:Time){
+      mu[j] <- X[j] * (B1 + (B2 * (X[j] >= a1) + B3 * (X[j] <= a2)))
+      lambda[j] ~ dnorm(rho * lambda[j - 1], sd = sigma)
+    }
+    for (j in 1:Time){
+      Y[j] ~ dpois(exp(B0 + mu[j] + lambda[j]))
+    }
+})
+
+poisTSData <- list(Y = y,
+                  X = x)
+
+poisTSConsts <- list(Time = n)
+
+poisTSInits <- list(lambda0 = 0,
+                     sigma = 1,
+                     rho = 0,
+                     a1 = 1,
+                     d = 1,
+                     B0 = 0,
+                     B1 = 0,
+                     B2 = 0,
+                     B3 = 0)
+
+poisTSModel <- nimbleModel(code = poisTSCode,
+                        data = poisTSData,
+                        inits = poisTSInits,
+                        constants = poisTSConsts)
+
+#compile nimble model to C++ code—much faster runtime
+C_poisTSModel <- compileNimble(poisTSModel, showCompilerOutput = FALSE)
+
+#configure the MCMC
+poisTSModel_conf <- configureMCMC(poisTSModel, thin = 99)
+poisTSModel_conf$removeSampler(c("B0", "B1", "B2", "B3", "a1", "d"))
+poisTSModel_conf$addSampler(target = c("B0", "B1", "B2", "B3"),
+                            type = "AF_slice")
+poisTSModel_conf$addSampler(target = c("a1", "d"),
+                            type = "AF_slice")
+
+#build MCMC
+poisTSModelMCMC <- buildMCMC(poisTSModel_conf,enableWAIC=F)
+
+#compile MCMC to C++—much faster
+C_poisTSModelMCMC <- compileNimble(poisTSModelMCMC, project=poisTSModel)
+
+#number of MCMC iterations
+niter <- 20000000
+
+#set seed for replicability
+#set.seed(1)
+
+#call the C++ compiled MCMC model
+samples <- runMCMC(C_poisTSModelMCMC, niter=niter)
+```
+
+With the samples saved somewhere, the results can be plotted as before,
+
+```{r, include = FALSE}
+load("./mcmc_samples_Glaser2009_int_long.RData")
+
+burnin <- 1000000
+thin <- 1
+
+dim_samples <- dim(samples)
+dframe <- as.data.frame(samples[seq(burnin,dim_samples[1],thin),])
+iter <- seq(burnin,dim_samples[1],thin)
+dframe$iteration <- iter
+samples_long <- gather(dframe,
+                        key = "Parameter",
+                        value = "Sample",
+                        -"iteration")
+parameters <- c("B0",
+                "B1",
                 "B2",
                 "B3",
                 "a1",
