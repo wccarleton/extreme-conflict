@@ -5,7 +5,9 @@ This repo contains the data and R code used for the study presented in the follo
 [*A Song of Neither Ice nor Fire: Temperature Extremes had No Impact on Violent Conflict Among European Societies During the 2nd Millennium CE*](https://doi.org/10.3389/feart.2021.769107)
 
 ## Archive
-This repo will be archived with Zenodo to reflect its state upon the acceptance of the above referenced paper to peer-reviewed academic journal. The relevant Zenodo DOI will be added here.
+This repo will be archived with Zenodo to reflect its state upon the acceptance of the above referenced paper to peer-reviewed academic journal.
+
+[![DOI](https://zenodo.org/badge/195126666.svg)](https://zenodo.org/badge/latestdoi/195126666)
 
 ## Abstract
 

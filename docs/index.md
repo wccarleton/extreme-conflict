@@ -9,6 +9,11 @@ This repo contains the data and R code used for the study presented in the follo
 
 The second millennium CE in Europe is known for both climatic extremes and bloody conflict. Europeans experienced the Medieval Warm Period and the Little Ice Age, and they suffered history-defining violence like the Wars of the Roses, Hundred Years War, and both World Wars. In this paper, we describe a quantitative study in which we sought to determine whether the climatic extremes affected conflict levels in Europe between 1,005 and 1980 CE. The study involved comparing a well-known annual historical conflict record to four published temperature reconstructions for Central and Western Europe. We developed a Bayesian regression model that allows for potential threshold effects in the climate–conflict relationship and then tested it with simulated data to confirm its efficacy. Next, we ran four analyses, each one involving the historical conflict record as the dependent variable and one of the four temperature reconstructions as the sole covariate. Our results indicated that none of the temperature reconstructions could be used to explain variation in conflict levels. It seems that shifts to extreme climate conditions may have been largely irrelevant to the conflict generating process in Europe during the second millennium CE.
 
+## Archive
+This repo will be archived with Zenodo to reflect its state upon the acceptance of the above referenced paper to peer-reviewed academic journal.
+
+[![DOI](https://zenodo.org/badge/195126666.svg)](https://zenodo.org/badge/latestdoi/195126666)
+
 ## Contact
 
 [ORCID](https://orcid.org/0000-0001-7463-8638) |
